@@ -12,4 +12,3 @@ def __virtual__():
 
 def running_config():
     return __salt__['junos.rpc']('get-config')['rpc_reply']['configuration']
-

@@ -12,4 +12,3 @@ def __virtual__():
 
 def running_config():
     return __salt__['netmiko.send_command']('show running-config')
-
