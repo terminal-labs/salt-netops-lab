@@ -1,0 +1,17 @@
+{# /srv/salt/templates/basic.j2 #} 
+{%- set proxytype = pillar.get('proxy', {}).get('proxytype') %}
+{%- set device_type = pillar.get('proxy', {}).get('device_type') %}
+{%- if proxytype == 'junos' %}
+set apply-groups OSPF-DEFAULT-METRIC
+set apply-groups re0
+set apply-groups re1
+{%- elif proxytype == 'netmiko' and device_type == 'arista_eos' %}
+aaa authorization console
+no aaa root
+{%- elif proxytype == 'netmiko' and device_type == 'cisco_nxos' %}
+no ip access-list DENY-IMS
+ip access-list DENY-IMS
+deny ip host 10.0.30.22 any
+{%- else %}
+  {{ raise("Unsupported proxytype and / or device_type") }}
+{%- endif %}
