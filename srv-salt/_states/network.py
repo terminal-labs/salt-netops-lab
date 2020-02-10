@@ -18,12 +18,22 @@ def configured(name):
     if not diff:
         ret['result'] = True
         ret['comment'] = "The device is already configured."
+
+        # abort session
+        abort_ret = __salt__['config.abort'](session_name) if \
+            session_name else __salt__['config.abort']()
+
         return ret
     elif __opts__["test"]:
         # there is a diff, but test=True
         ret['result'] = None
         ret['changes'] = {'diff': diff}
         ret['comment'] = "Changes would be applied but we are in test mode."
+
+        # abort session
+        abort_ret = __salt__['config.abort'](session_name) if \
+            session_name else __salt__['config.abort']()
+
         return ret
     else:
         # there is a diff and we are not in test mode
