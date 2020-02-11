@@ -1,1 +1,1 @@
-# IBM Lab Demo
+# Salt NetOps Lab
