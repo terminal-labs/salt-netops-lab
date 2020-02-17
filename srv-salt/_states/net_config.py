@@ -8,20 +8,20 @@ def configured(name):
         'changes': {},
         'comment': ''
     }
-    load_ret = __salt__['config.load'](name)
+    load_ret = __salt__['net_config.load'](name)
     session_name = load_ret.get('session_name')
     if session_name:
-        diff = __salt__['config.diff'](session_name)
+        diff = __salt__['net_config.diff'](session_name)
     else:
-        diff = __salt__['config.diff']()
+        diff = __salt__['net_config.diff']()
     
     if not diff:
         ret['result'] = True
         ret['comment'] = "The device is already configured."
 
         # abort session
-        abort_ret = __salt__['config.abort'](session_name) if \
-            session_name else __salt__['config.abort']()
+        abort_ret = __salt__['net_config.abort'](session_name) if \
+            session_name else __salt__['net_config.abort']()
 
         return ret
     elif __opts__["test"]:
@@ -31,16 +31,16 @@ def configured(name):
         ret['comment'] = "Changes would be applied but we are in test mode."
 
         # abort session
-        abort_ret = __salt__['config.abort'](session_name) if \
-            session_name else __salt__['config.abort']()
+        abort_ret = __salt__['net_config.abort'](session_name) if \
+            session_name else __salt__['net_config.abort']()
 
         return ret
     else:
         # there is a diff and we are not in test mode
         if session_name:
-            commit_ret = __salt__['config.commit'](session_name)
+            commit_ret = __salt__['net_config.commit'](session_name)
         else:
-            commit_ret = __salt__['config.commit']()
+            commit_ret = __salt__['net_config.commit']()
         ret['result'] = True
         ret['changes'] = {'old': '', 'new': diff}
         ret['comment'] = "The device has been successfully configured."
