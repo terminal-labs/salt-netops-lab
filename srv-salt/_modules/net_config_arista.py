@@ -3,7 +3,7 @@ from jinja2 import TemplateError
 
 from salt.utils.platform import is_proxy
 
-__virtualname__ = 'config'
+__virtualname__ = 'net_config'
 
 
 def __virtual__():
@@ -71,7 +71,7 @@ def diff(session):
         delay_factor=4
     ).splitlines()
     new_config = [line.rstrip() for line in session_return if not line.startswith('!')]
-    return '\n'.join(set(new_config) - set(og_config))
+    return '\n'.join(set(new_config).symmetric_difference(set(og_config)))
 
 
 def commit(session):

@@ -1,6 +1,6 @@
 import salt.utils.platform
 
-__virtualname__ = 'config'
+__virtualname__ = 'net_config'
 
 def __virtual__():
     proxytype = __pillar__.get('proxy', {}).get('proxytype')
