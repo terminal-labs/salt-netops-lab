@@ -865,21 +865,41 @@ __/srv/salt/templates/cisco/rm_test_access_list.j2__
 no ip access-list test-access-list
 ```
 
-__/srv/salt/templates/juniper/lldp.set__
+__/srv/salt/templates/juniper/igmp.set__
 ```
-set protocols lldp interface all
+set protocols igmp interface all
 ```
 
-__/srv/salt/templates/juniper/no_lldp.set__
+__/srv/salt/templates/juniper/no_igmp.set__
 ```
-delete protocols lldp interface all
+delete protocols igmp interface all
+```
+
+Juniper makes rendering the diff easy since it is a built-in capability of the hardware.
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.load salt://templates/juniper/igmp.set
+```
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.diff
+```
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.commit
+```
+
+or
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.abort
 ```
 
 We now have a very robust virtualized config module for our 3 device types!
 
-Now, if we want to use them in states we should create the corresponding custom state module. 
+Now, if we want to use them in states we should create the corresponding custom _state_ module. 
 
-### Writing the custom state module function `net_config.configured`
+__Writing the custom state module function `net_config.configured`__
 
 As mentioned earlier, it is of great benefit to include idempotent logic when writing state modules. We will be using the `net_config` execution module we just created to build our state module.
 
@@ -956,13 +976,13 @@ Now let’s sync our modules and states:
 $ salt \* saltutil.sync_all
 ```
 
-Almost ready to test! Let’s create an sls file which will be used for all of our devices configuration. Create the following in the “states” directory.
+Almost ready to test! Let’s create an sls file which will be used for all of our devices configuration. Create the following in the `states/` directory.
 
 ```
 # /srv/salt/states/configure_devices.sls
 
 {%- if pillar['proxy']['proxytype'] == 'junos' %}
-  {%- set template_path = "salt://templates/juniper/lldp.set" %}
+  {%- set template_path = "salt://templates/juniper/igmp.set" %}
 {%- elif 'arista' in pillar['proxy']['device_type'] %}
   {%- set template_path = "salt://templates/arista/add_vlan_10.j2" %}
 {%- elif 'cisco' in pillar['proxy']['device_type'] %}
@@ -982,7 +1002,7 @@ Now let’s execute this state with the following command. Target all the proxy 
 $ salt -I 'proxy:*' state.sls states.configure_devices
 ```
 
-Notice the output coloration upon success, changes, etc. We now have a powerful salt configuration state!
+Notice the output coloration upon success, changes, etc. We now have a powerful custom salt configuration state!
 
 Notice the state’s idempotency. We can apply the same state again and will expect no perturbation since we are already in our desired configuration.
 
@@ -998,7 +1018,7 @@ We can apply a “de-configuration” state to further test and demonstrate. Cre
 # /srv/salt/states/deconfigure_devices.sls
 
 {%- if pillar.proxy.proxytype == 'junos' %}
-  {%- set template_path = "salt://templates/juniper/no_lldp.set" %}
+  {%- set template_path = "salt://templates/juniper/no_igmp.set" %}
 {%- elif 'arista' in pillar.proxy.device_type %}
   {%- set template_path = "salt://templates/arista/rm_vlan_10.j2" %}
 {%- elif 'cisco' in pillar.proxy.device_type %}
@@ -1030,7 +1050,7 @@ Success!
 
 __Background__
 
-Salt operates as a publish / subscribe model, i.e., the master publishes events to its event bus on port 4505, while the minions, listening to this port, determine if the job is for them and proceed to execute it. The minion will then return data on port 4506. Therefore, minus the publishing of events, the salt minion is largely responsible for the successful completion and return of the job. However, salt provides a mechanism for which to execute commands on the master, these are called runners.
+Salt operates as a publish / subscribe model, i.e., the master publishes events to its event bus on port 4505, while the minions, listening to this port, determine if the job is for them and proceed to execute it. The minion will then return data on port 4506. Therefore, minus the publishing of events, the salt minion is largely responsible for the successful completion and return of the job. However, salt provides a mechanism for which to execute commands on the master; these are called runners.
 
 There are many runners built into salt. For example, to view values from the master config:
 
@@ -1061,7 +1081,6 @@ To do this we need to first declare where we are going to store the runner modul
 
 ```
 runner_dirs:
-  - /srv/runners
   - /srv/salt/runners
 ```
 
@@ -1074,7 +1093,7 @@ $ supervisorctl restart salt-master
 Be sure to also create the corresponding directories.
 
 ```
-$ mkdir /srv/runners && mkdir /srv/salt/runners
+$ mkdir /srv/salt/runners
 ```
 
 Runner modules are always executed on the master, so they can be especially useful for “one-off” scripts. Adding a runner module instead of normal python utility scripts allows us to use typical salt paradigms _and_ freely use them within salt states and orchestration.
@@ -1126,6 +1145,11 @@ def running_config_report(tgt='*', tgt_type='glob', save_as=''):
 
 Notice we are using the `get.running_config` function we created earlier through the use of the `salt.execute` built-in runner. Also, notice that we took advantage of `salt.execute` which publishes the job for the targeted minions to execute in parallel. Then, we simply iterate through the return to generate the report.
 
+We also need to sync the runners.
+```
+$ salt-run saltutil.sync_runners
+```
+
 Now we can execute this function on a list of minions with a command like the following:
 
 ```
@@ -1134,6 +1158,8 @@ $ salt-run generate.running_config_report \
 ```
 
 And we get a report of the running configuration from our list of minions!
+
+Notice that the runner we wrote is able to accept any `tgt` and `tgt_type` since these are simply passed along to the `salt.execute` function.
 
 __Salt Orchestration__
 
@@ -1209,7 +1235,7 @@ Congratulations! We have successfully sequentially configured our devices with s
 
 ## Lab 5: Reactor and Beacons
 
-Salt has the ability to automate infrastructure operations with little to no human intervention. In this lab, we will become familiar with the salt reactor and beacons. Beacons are salt modules that are distributed and run on the minion, which can be configured to emit messages when certain conditions occur. Examples include file modification, memory usage exceeding a threshold, a package being out of date, etc. Salt has many built-in beacon modules which only require minimal configuration to set up. Additionally, we could write a custom beacon, or a stand-alone python script which emits salt events.
+Salt has the ability to automate infrastructure operations with little to no human intervention. In this lab, we will become familiar with the salt reactor and beacons. Beacons are salt modules that are distributed and run on the minion, which can be configured to emit messages when certain conditions occur. Examples include file modification, memory usage exceeding a threshold, a package being out of date, etc. Salt has many built-in beacon modules which only require minimal configuration to set up. For information on the available built-in beacons see the [docs](https://docs.saltproject.io/en/latest/py-modindex.html#cap-b). Additionally, we could write a custom beacon, or a stand-alone python script which emits salt events.
 
 The salt reactor is located on the master and _reacts_ to events. These reactions can respond to events emitted by beacons (or custom scripts). Once the event tag is matched, salt will execute a list of reactor sls files, typically to remediate or otherwise respond to the event in question. Events can pass data to be used by reactors. This can be very useful in certain scenarios.
 
@@ -1239,7 +1265,7 @@ $ mkdir /srv/salt/_beacons
 
 def validate(config):
     _config = {}
-    map(_config.update, config)
+    list(map(_config.update, config))
     
     for fun in _config['salt_fun']:
         if fun not in __salt__:
@@ -1249,7 +1275,7 @@ def validate(config):
 def beacon(config):
     events = []
     _config = {}
-    map(_config.update, config)
+    list(map(_config.update, config))
 
     for fun in _config['salt_fun']:
         ret = __salt__[fun]()
@@ -1461,7 +1487,7 @@ The default_config pillar file should be the following for juniper and cisco, re
 
 __/srv/pillar/juniper/default_config.sls__
 ```
-default_config: salt://templates/juniper/lldp.set
+default_config: salt://templates/juniper/igmp.set
 ```
 
 __/srv/pillar/cisco/default_config.sls__
@@ -1514,9 +1540,9 @@ $ salt -I 'proxy:*' state.sls states.configure_devices
 $ salt -I 'proxy:*' state.sls states.deconfigure_devices
 ```
 
-You should be seeing the beacon event after “de-configuring” the device.
+__Note__: The above beacon module is written to only return events _if_ the return (from each `salt_fun`, respectively) is "truthy". Therefore, since our `net_config.diff` returns `False` when there is no diff, you should only see the beacon event(s) after “de-configuring” the device.
 
-Now let’s add auto-remediation via salt reactor.
+Now, let’s add auto-remediation via salt reactor.
 
 In the master config file we can set up our reactor to watch for event tags:
 
