@@ -1,5 +1,215 @@
 # Salt NetOps Lab
 
+## Lab 1: Lab Setup and Introduction
+
+To perform the following labs you will need a host with salt installed and 1 or more network devices to talk to. Salt can be installed via pip or thru your OS's package manager. To install with
+your OS package manager, follow the instructions provided at https://repo.saltstack.com. Make sure to install both `salt-master` and `salt-minion`.
+
+The following labs make use of several different salt proxy minion types. They are:
+- junos
+- netmiko
+  - device_type:
+    - arista_eos
+    - cisco_nxos
+- napalm
+  - driver:
+    - eos
+
+If you don't have devices available for the proxytype / device_type used, you may opt to obtain virtual routers thru the cloud provider of choice or simply skip the material which references them.
+
+__Configure `salt-minion` to respond to `salt-master` on localhost__
+
+After salt is installed, we can configure our local minion to respond to the local master by editing the minion configuration like so. 
+
+```
+# /etc/salt/minion.d/minion.conf
+
+master: localhost
+```
+
+Make sure to restart the minion after modifying the config.
+
+```
+$ systemctl restart salt-minion
+```
+
+You must accept the incoming minion's key in order to communicate with. We can list them first with the following.
+
+```
+salt-key -L
+```
+
+After verifying, you can accept all with the following.
+
+```
+$ salt-key -A
+```
+
+Confirm connectivity by issuing a `test.ping`
+
+```
+$ salt \* test.ping
+```
+
+__Configuring proxy minions__
+
+The proxy configuration lives in `/etc/salt/proxy`. Let's edit this to point to our `salt-master` running on the localhost like we did for the local `salt-minion`.
+
+```
+# /etc/salt/proxy
+
+master: localhost
+```
+
+Now, let's configure our proxy minions. One way to configure proxy minions is via pillar. Create the directory `/srv/pillar` if it does not already exist and create a top file.
+
+```
+# /srv/pillar/top.sls
+
+base:
+  veos-proxy:
+    - veos
+  vsrx-proxy:
+    - vsrx
+  nxos-proxy:
+    - nxos
+```
+
+The topfile denotes which files are applied to each minion. The keys under the `base` key are matching by minion_id (which will be defined later) and the list underneath repesents the sls filenames which to apply as pillar. Note that the `.sls` extension is ommitted. Now let's create those sls files.
+
+```
+# /srv/pillar/veos.sls
+proxy:
+  proxytype: netmiko
+  device_type: arista_eos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxxx
+```
+
+```
+# /srv/pillar/vsrx.sls
+proxy:
+  proxytype: junos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxxx
+  port: 830     # or use port 22 for netconf over ssh
+```
+
+```
+# /srv/pillar/nxos.sls
+proxy:
+  proxytype: netmiko
+  device_type: cisco_nxos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxxxx
+```
+
+See the following for more information on the proxy config options:
+- [netmiko salt proxy docs](https://docs.saltproject.io/en/3000/ref/proxy/all/salt.proxy.netmiko_px.html)
+- [junos salt proxy docs](https://docs.saltproject.io/en/3000/ref/proxy/all/salt.proxy.junos.html)
+- [napalm salt proxy docs](https://docs.saltproject.io/en/3000/ref/proxy/all/salt.proxy.napalm.html)
+
+Also, be sure to install the necessary dependencies for your proxy minions.
+
+```
+pip3 install netmiko junos-eznc jxmlease
+```
+
+Now, we can start the proxy processes in the background.
+```
+$ salt-proxy --proxyid=veos-proxy -d
+$ salt-proxy --proxyid=vsrx-proxy -d
+$ salt-proxy --proxyid=nxos-proxy -d
+```
+
+Notice that the `--proxyid` parameter is the same as what was defined in the pillar topfile. The `-d` flag sends the process to the background. Running `salt-proxy` _without_ the `-d` flag can be useful for troubleshooting. You can view the proxy minion's logs at `/var/log/salt/proxy`.
+
+Again, we have to accept the incoming proxy minion's keys. After verifying, accept all.
+
+```
+salt-key -A
+```
+
+Test connectivity to your minions by issuing some commands.
+
+```
+$ salt \* test.ping
+$ salt \* test.version
+```
+
+__Troubleshooting__
+
+If your minion or proxy minion fails to connect you can view the logs to diagnose the problem at `/var/log/salt/minion` and `/var/log/salt/proxy`, respectively. For more verbose output, you can set `log_level` in the minion/proxy-minion config file(s) or use the `--log-level` flag at the cli if running the process in the foreground. You can view the available log levels in salt in the [docs](https://docs.saltproject.io/en/latest/ref/configuration/logging/index.html#log-levels).
+
+
+__Built-in execution modules__
+
+Salt comes with hundreds of built-in modules for performing various jobs. Some are intended to be used with proxy minions, some with regular minions, while some support both. Let’s experiment with a few of them of interest to us.
+
+Target the arista netmiko proxy minion.
+
+```
+$ salt -I 'proxy:device_type:arista*' netmiko.send_config  config_commands='["aaa authorization console", "no aaa root"]' delay_factor=3 
+```
+
+Or we can target the all netmiko proxy minions.
+
+```
+$ salt -I 'proxy:proxytype:netmiko' netmiko.send_config  config_commands='["no ip access-list DENY-HOST", "ip access-list DENY-HOST", "deny ip host 10.0.0.1 any"]' delay_factor=4
+```
+
+With this function, like many others in salt, we can alternatively source the file from a template, which may include jinja. The default file_roots location, defined in the master configuration file, is /srv/salt; let’s create the /srv/salt directory. Inside here let’s create another directory “templates”, with the file basic.j2 inside.
+
+```
+{# /srv/salt/templates/basic.j2 #} 
+{%- set proxytype = pillar.get('proxy', {}).get('proxytype') %}
+{%- set device_type = pillar.get('proxy', {}).get('device_type') %}
+{%- if proxytype == 'junos' %}
+set system no-redirects
+set system no-redirects-ipv6
+{%- elif proxytype == 'netmiko' and device_type == 'arista_eos' %}
+aaa authorization console
+no aaa root
+{%- elif proxytype == 'netmiko' and device_type == 'cisco_nxos' %}
+no ip access-list DENY-HOST
+ip access-list DENY-HOST
+deny ip host 10.0.0.1 any
+{%- else %}
+  {{ raise("Unsupported proxytype and / or device_type") }}
+{%- endif %}
+```
+
+Now let’s apply this config, targeting all devices.
+
+```
+$ salt -I 'proxy:proxytype:netmiko' netmiko.send_config salt://templates/basic.j2
+```
+
+We’ve successfully sent a dynamic jinja template to multiple devices with salt! Notice that this command only works for netmiko proxy minions. For the juniper device, we have to use the built-in junos module, `junos.load`. We will create a custom module in Lab 2 to abstract this away so that we can target all proxy minions.
+
+Before we do that, there are a few more things to notice here. First of all, we moved the logic to determine which config to send, in the jinja itself. Also, salt provides a raise function within jinja that we used to halt further execution if we targeted an unsupported device. Secondly, we were able to do this because of the salt injected pillar variable which holds all of the pillar data for the minion targeted. Salt additionally injects the variables grains and salt, which hold the grains data and execution modules, respectively. Finally, notice the `salt://` filepath. This instructs salt to use the configured file server, which by default serves the files from the /srv/salt directory. It is the role of the execution module to handle this correctly, but this is a common convention supported across most salt built-ins.
+
+__Other built-in modules__
+
+It’s easy to look up which modules, functions and in-source documentation exist for any minion. Here are a few example commands to use.
+
+```
+$ salt <tgt> sys.list_modules 
+$ salt <tgt> sys.list_functions netmiko
+$ salt <tgt> sys.doc netmiko.send_config
+```
+
+The junos proxy also can make use of built in functions.
+
+```
+$ salt -I 'proxy:proxytype:junos' junos.facts
+```
+
+There are many built-in execution modules to explore but we are certainly not constrained by them. With salt’s plug-in architecture, we can easily add our own custom modules! As you will see in the following lab, these can be entirely unique and / or leverage existing modules.
+
 ## Lab 2: Writing Custom Execution Modules
 
 Let’s create a module which abstracts the exact method for communicating across proxy device types that we can commonly call upon when configuring devices. Create a file in the `_modules` directory in the `file_roots` named `common.py`
@@ -414,7 +624,7 @@ There are several operations that happen when “configuring” a device. The ta
 * Abort
 ** Discarding the candidate configuration
 
-Let’s create a custom _virtual_ execution module `net_config` to perform these tasks. Starting with arista, let’s create `net_config_arista.py` and include the appropriate virtual function.
+Let’s create a custom virtual _execution_ module `net_config` to perform these tasks. Starting with arista, let’s create `net_config_arista.py` and include the appropriate virtual function.
 
 ```
 # /srv/salt/_modules/net_config_arista.py
@@ -467,21 +677,9 @@ def load(template, session_name=None):
         session_name = "config-session-" + str(int(time.time() * 1000))
     config_session_cmd = 'configure session ' + session_name
 
-    template_string = __salt__['slsutil.renderer'](
-        template, default_renderer='jinja'
-    ).strip()
-    list_of_commands = template_string.splitlines()
-    if not list_of_commands:
-        raise TemplateError(
-            "The rendered template contains 0 lines of configuration. "\
-            "Check the template or the template authorization."
-        )
-
-    __salt__['netmiko.enter_config_mode'](
-        config_command=config_session_cmd
-    )
     device_output = __salt__['netmiko.send_config'](
-        config_commands=list_of_commands,
+        config_file=template,
+        config_mode_command=config_session_cmd,
         delay_factor=2,
         exit_config_mode=True
     )
@@ -538,22 +736,16 @@ Now for the commit and abort functions.
 def commit(session):
     cfg_session_cmd = 'configure session ' + session
     ret = ""
-    ret += __salt__['netmiko.enter_config_mode'](
-        config_command=cfg_session_cmd
-    )
     ret += __salt__['netmiko.send_config'](
-        config_commands=['commit'], exit_config_mode=True
+        config_commands=['commit'], config_mode_command=cfg_session_cmd, exit_config_mode=True
     )
     return ret
 
 def abort(session):
     cfg_session_cmd = 'configure session ' + session
     ret = ""
-    ret += __salt__['netmiko.enter_config_mode'](
-        config_command=cfg_session_cmd
-    )
     ret += __salt__['netmiko.send_config'](
-        config_commands=['abort'], exit_config_mode=True
+        config_commands=['abort'], config_mode_command=cfg_session_cmd, exit_config_mode=True
     )
     return ret
 ```
