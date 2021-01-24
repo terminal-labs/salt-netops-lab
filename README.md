@@ -210,6 +210,70 @@ $ salt -I 'proxy:proxytype:junos' junos.facts
 
 There are many built-in execution modules to explore but we are certainly not constrained by them. With salt’s plug-in architecture, we can easily add our own custom modules! As you will see in the following lab, these can be entirely unique and / or leverage existing modules.
 
+__Extra: Controlling arista vEOS with napalm via eAPI with pyeapi__
+
+Arista devices can be controlled with netmiko, like we've configured above, however, we can alternatively use the [napalm salt proxy](https://docs.saltproject.io/en/latest/ref/proxy/all/salt.proxy.napalm.html). The [napalm](https://github.com/napalm-automation/napalm) library provides a provider agnostic abstraction for several device types. One benefit of using napalm for arista, specifically, is that the backend library used is [pyeapi](https://github.com/arista-eosplus/pyeapi) which, as the name implies, communicates thru the arista eapi instead of ssh.
+
+To be able to use the eAPI we must make sure it is enabled. On the arista shell,
+
+```
+# config
+(config)# management api http-commands
+(config-mgmt-api-http-cmds)# no shutdown
+(config-mgmt-api-http-cmds)#
+```
+
+You can view the status of the eapi with the following.
+
+```
+# show management api http-commands
+```
+
+Once you have the eapi enabled, let's create the pillar for the napalm proxy.
+
+```
+# /srv/pillar/veos-napalm.sls
+proxy:
+  proxytype: napalm
+  driver: eos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxx
+```
+
+Apply this with your pillar topfile.
+
+```
+# /srv/pillar/top.sls
+base:
+  ...
+  veos-napalm-proxy:
+    - veos-napalm
+  ...
+```
+
+Make sure you have the necessary dependencies installed.
+
+```
+$ pip3 install napalm pyeapi
+```
+
+And then start the proxy. 
+
+```
+$ salt-proxy --proxyid=veos-napalm-proxy -d
+```
+
+Again, don't forget to accept the minion key.
+
+Notice that we can leave the original arista netmiko proxy running, since we are launching a seperate process with a different proxyid.
+
+________________________________________________________________
+
+__Do it!__
+
+See which proxy minion performs faster! Salt's distributed nature helps us deliver jobs to the proxy minions in parallel, giving us a good test case for comparison.
+
 ## Lab 2: Writing Custom Execution Modules
 
 Let’s create a module which abstracts the exact method for communicating across proxy device types that we can commonly call upon when configuring devices. Create a file in the `_modules` directory in the `file_roots` named `common.py`
