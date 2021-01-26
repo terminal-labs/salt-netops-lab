@@ -1,6 +1,5 @@
 # /srv/salt/_modules/net_config_arista.py
 import time
-from jinja2 import TemplateError
 
 from salt.utils.platform import is_proxy
 

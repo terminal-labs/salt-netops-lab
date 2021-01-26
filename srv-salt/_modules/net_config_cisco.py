@@ -1,5 +1,4 @@
 import time
-from jinja2 import TemplateError
 from salt.utils.platform import is_proxy
 
 __virtualname__ = 'net_config'

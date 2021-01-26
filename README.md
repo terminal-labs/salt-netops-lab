@@ -659,7 +659,6 @@ Let's start with the load function.
 ```
 ...
 import time
-from jinja2 import TemplateError
 ...
 
 def load(template, session_name=None):
@@ -914,7 +913,7 @@ $ mkdir _states
 
 def configured(name):
     """
-    Ensure the device is configured. Uses config execution module
+    Ensure the device is configured. Uses net_config execution module
     """
     ret = {
         'name': name,
@@ -994,7 +993,7 @@ configure_device:
     - name: {{ template_path }}
 ```
 
-Here we are using the state function we just made, and applying the appropriate template_path. Notice how we are using the power of jinja and salt’s inject global variables to dynamically determine the appropriate template path!
+Here we are using the state function we just made, and applying the appropriate template_path. Notice how we are using the power of jinja and salt’s injected global variables to dynamically determine the appropriate template path!
 
 Now let’s execute this state with the following command. Target all the proxy minions.
 
@@ -1002,7 +1001,7 @@ Now let’s execute this state with the following command. Target all the proxy 
 $ salt -I 'proxy:*' state.sls states.configure_devices
 ```
 
-Notice the output coloration upon success, changes, etc. We now have a powerful custom salt configuration state!
+Notice the output coloration upon success, changes, etc. We now have a powerful and abstracted custom salt configuration state!
 
 Notice the state’s idempotency. We can apply the same state again and will expect no perturbation since we are already in our desired configuration.
 
@@ -1237,7 +1236,7 @@ Congratulations! We have successfully sequentially configured our devices with s
 
 Salt has the ability to automate infrastructure operations with little to no human intervention. In this lab, we will become familiar with the salt reactor and beacons. Beacons are salt modules that are distributed and run on the minion, which can be configured to emit messages when certain conditions occur. Examples include file modification, memory usage exceeding a threshold, a package being out of date, etc. Salt has many built-in beacon modules which only require minimal configuration to set up. For information on the available built-in beacons see the [docs](https://docs.saltproject.io/en/latest/py-modindex.html#cap-b). Additionally, we could write a custom beacon, or a stand-alone python script which emits salt events.
 
-The salt reactor is located on the master and _reacts_ to events. These reactions can respond to events emitted by beacons (or custom scripts). Once the event tag is matched, salt will execute a list of reactor sls files, typically to remediate or otherwise respond to the event in question. Events can pass data to be used by reactors. This can be very useful in certain scenarios.
+The salt __reactor__ is located on the master and _reacts_ to events. These reactions can respond to events emitted by beacons (or custom scripts). Once the event tag is matched, salt will execute a list of reactor sls files, typically to remediate or otherwise respond to the event in question. Events can pass data to be used by reactors. This can be very useful in certain scenarios.
 
 __Writing a custom beacon__
 
@@ -1542,7 +1541,7 @@ $ salt -I 'proxy:*' state.sls states.deconfigure_devices
 
 __Note__: The above beacon module is written to only return events _if_ the return (from each `salt_fun`, respectively) is "truthy". Therefore, since our `net_config.diff` returns `False` when there is no diff, you should only see the beacon event(s) after “de-configuring” the device.
 
-Now, let’s add auto-remediation via salt reactor.
+Now, let’s add auto-remediation via the salt reactor.
 
 In the master config file we can set up our reactor to watch for event tags:
 
@@ -1555,7 +1554,7 @@ reactor:
     - /srv/salt/reactor/remediate_monitor.sls
 ```
 
-Notice that we can include the glob “*” in the event tag. For each event of this form the master sees, the list of reactor states will be executed. Here we have only listed a single reactor state that we have yet to write. Let’s write it.
+Notice that we can include the glob `*` in the event tag. For each event of this form the master sees, the list of reactor states will be executed. Here we have only listed a single reactor state that we have yet to write. Let’s write it.
 
 ```
 $ mkdir /srv/salt/reactor
@@ -1571,6 +1570,8 @@ configure_device_{{ data['_stamp'] }}:
       - mods:
         - states.configure_devices
 ```
+
+Notice that we can use the event's data by using the jinja injected `data` variable.
 
 The syntax for reactor states is different from other sls files you have seen before. The difference is that the namespace for the function in the id block (in this case `local.state.sls`) must designate which type of reactor is run. “Local” will run an execution module on the remote minions specified. “Runner” will allow us to use runner modules. Other types of reactors exist. For more information, please consult the [docs page on reactor states](https://docs.saltstack.com/en/latest/topics/reactor/).
 
