@@ -1086,7 +1086,7 @@ runner_dirs:
 Remember to restart the master process after modifying the config.
 
 ```
-$ supervisorctl restart salt-master
+$ systemctl restart salt-master
 ```
 
 Be sure to also create the corresponding directories.
@@ -1305,7 +1305,7 @@ Sync the beacons and restart the minion process.
 
 ```
 $ salt \* saltutil.sync_beacons
-$ supervisorctl restart salt-minion
+$ systemctl restart salt-minion
 ```
 
 Now let’s watch the master event bus for the beacon event and return data.
@@ -1519,11 +1519,7 @@ beacons:
 
 The `disable_during_state_run` option is a built-in beacon feature which will, as its name implies, halt the beacon during state module execution. This is to help avoid potential interference with other operations.
 
-Be sure to restart the proxy minions and then view the salt event bus.
-
-```
-supervisorctl restart <minion1> <minion2> <minion3>
-```
+Be sure to __restart the proxy minions__ and then view the salt event bus. Unless you have configured the proxy minions with a process manager such as systemd or supervisord, you will need to stop the processes and start new ones manually.
 
 ```
 $ salt-run state.event pretty=True
@@ -1578,7 +1574,7 @@ The syntax for reactor states is different from other sls files you have seen be
 Restart the master and view the event. “Deconfigure” the minions, if necessary, to view the auto-remediation.
 
 ```
-$ supervisorctl restart salt-master
+$ systemctl restart salt-master
 ```
 
 ```
@@ -1592,7 +1588,7 @@ Note: If the monitor beacon we set up earlier for the normal salt minion is stil
 ```
 $ mv /etc/salt/minion.d/beacons.conf \
     /etc/salt/minion.d/beacons.conf.disabled
-$ supervisorctl restart salt-minion
+$ systemctl restart salt-minion
 ```
 
 Congratulations! We have learned a powerful way to auto-remediate configuration drift!
