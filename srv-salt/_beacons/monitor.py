@@ -33,7 +33,7 @@ def _parse_args(args_kwargs_dict):
 
 def validate(config):
     _config = {}
-    map(_config.update, config)
+    list(map(_config.update, config))
 
     for entry in _config['salt_fun']:
         if isinstance(entry, dict):
@@ -65,7 +65,7 @@ def validate(config):
 def beacon(config):
     events = []
     _config = {}
-    map(_config.update, config)
+    list(map(_config.update, config))
 
     for entry in _config['salt_fun']:
         if isinstance(entry, dict):

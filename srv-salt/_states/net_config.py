@@ -1,6 +1,6 @@
 def configured(name):
     """
-    Ensure the device is configured. Uses config execution module.
+    Ensure the device is configured. Uses net_config execution module.
     """
     ret = {
         'name': name,

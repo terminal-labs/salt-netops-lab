@@ -1,5 +1,4 @@
 import time
-from jinja2 import TemplateError
 from salt.utils.platform import is_proxy
 
 __virtualname__ = 'net_config'
@@ -18,21 +17,9 @@ def load(template, session_name=None):
         session_name = "config-session-" + str(int(time.time() * 1000))
     config_session_cmd = 'configure session ' + session_name
 
-    template_string = __salt__['slsutil.renderer'](
-        template, default_renderer='jinja'
-    ).strip()
-    list_of_commands = template_string.splitlines()
-    if not list_of_commands:
-        raise TemplateError(
-            "The rendered template contains 0 lines of configuration. "\
-            "Check the template or the template authorization."
-        )
-
-    __salt__['netmiko.enter_config_mode'](
-        config_command=config_session_cmd
-    )
     device_output = __salt__['netmiko.send_config'](
-        config_commands=list_of_commands,
+        config_file=template,
+        config_mode_command=config_session_cmd,
         delay_factor=2,
         exit_config_mode=True
     )
@@ -57,11 +44,8 @@ def diff(session):
 def commit(session):
     cfg_session_cmd = 'configure session ' + session
     ret = ""
-    ret += __salt__['netmiko.enter_config_mode'](
-        config_command=cfg_session_cmd
-    )
     ret += __salt__['netmiko.send_config'](
-        config_commands=['commit'], exit_config_mode=True
+        config_commands=['commit'], config_mode_command=cfg_session_cmd, exit_config_mode=True
     )
     return ret
 
@@ -69,10 +53,7 @@ def commit(session):
 def abort(session):
     cfg_session_cmd = 'configure session ' + session
     ret = ""
-    ret += __salt__['netmiko.enter_config_mode'](
-        config_command=cfg_session_cmd
-    )
     ret += __salt__['netmiko.send_config'](
-        config_commands=['abort'], exit_config_mode=True
+        config_commands=['abort'], config_mode_command=cfg_session_cmd, exit_config_mode=True
     )
     return ret

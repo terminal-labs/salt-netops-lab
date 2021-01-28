@@ -1,5 +1,215 @@
 # Salt NetOps Lab
 
+## Lab 1: Lab Setup and Introduction
+
+To perform the following labs you will need a host with salt installed and 1 or more network devices to talk to. Salt can be installed via pip or thru your OS's package manager. To install with
+your OS package manager, follow the instructions provided at https://repo.saltstack.com. Make sure to install both `salt-master` and `salt-minion`.
+
+The following labs make use of several different salt proxy minion types. They are:
+- junos
+- netmiko
+  - device_type:
+    - arista_eos
+    - cisco_nxos
+- napalm
+  - driver:
+    - eos
+
+If you don't have devices available for the proxytype / device_type used, you may opt to obtain virtual routers thru the cloud provider of choice or simply skip the material which references them.
+
+__Configure `salt-minion` to respond to `salt-master` on localhost__
+
+After salt is installed, we can configure our local minion to respond to the local master by editing the minion configuration like so. 
+
+```
+# /etc/salt/minion.d/minion.conf
+
+master: localhost
+```
+
+Make sure to restart the minion after modifying the config.
+
+```
+$ systemctl restart salt-minion
+```
+
+You must accept the incoming minion's key in order to communicate with. We can list them first with the following.
+
+```
+salt-key -L
+```
+
+After verifying, you can accept all with the following.
+
+```
+$ salt-key -A
+```
+
+Confirm connectivity by issuing a `test.ping`
+
+```
+$ salt \* test.ping
+```
+
+__Configuring proxy minions__
+
+The proxy configuration lives in `/etc/salt/proxy`. Let's edit this to point to our `salt-master` running on the localhost like we did for the local `salt-minion`.
+
+```
+# /etc/salt/proxy
+
+master: localhost
+```
+
+Now, let's configure our proxy minions. One way to configure proxy minions is via pillar. Create the directory `/srv/pillar` if it does not already exist and create a top file.
+
+```
+# /srv/pillar/top.sls
+
+base:
+  veos-proxy:
+    - veos
+  vsrx-proxy:
+    - vsrx
+  nxos-proxy:
+    - nxos
+```
+
+The topfile denotes which files are applied to each minion. The keys under the `base` key are matching by minion_id (which will be defined later) and the list underneath repesents the sls filenames which to apply as pillar. Note that the `.sls` extension is ommitted. Now let's create those sls files.
+
+```
+# /srv/pillar/veos.sls
+proxy:
+  proxytype: netmiko
+  device_type: arista_eos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxxx
+```
+
+```
+# /srv/pillar/vsrx.sls
+proxy:
+  proxytype: junos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxxx
+  port: 830     # or use port 22 for netconf over ssh
+```
+
+```
+# /srv/pillar/nxos.sls
+proxy:
+  proxytype: netmiko
+  device_type: cisco_nxos
+  host: x.x.x.x
+  username: xxxx
+  password: xxxxxxxxxxx
+```
+
+See the following for more information on the proxy config options:
+- [netmiko salt proxy docs](https://docs.saltproject.io/en/3000/ref/proxy/all/salt.proxy.netmiko_px.html)
+- [junos salt proxy docs](https://docs.saltproject.io/en/3000/ref/proxy/all/salt.proxy.junos.html)
+- [napalm salt proxy docs](https://docs.saltproject.io/en/3000/ref/proxy/all/salt.proxy.napalm.html)
+
+Also, be sure to install the necessary dependencies for your proxy minions.
+
+```
+pip3 install netmiko junos-eznc jxmlease
+```
+
+Now, we can start the proxy processes in the background.
+```
+$ salt-proxy --proxyid=veos-proxy -d
+$ salt-proxy --proxyid=vsrx-proxy -d
+$ salt-proxy --proxyid=nxos-proxy -d
+```
+
+Notice that the `--proxyid` parameter is the same as what was defined in the pillar topfile. The `-d` flag sends the process to the background. Running `salt-proxy` _without_ the `-d` flag can be useful for troubleshooting. You can view the proxy minion's logs at `/var/log/salt/proxy`.
+
+Again, we have to accept the incoming proxy minion's keys. After verifying, accept all.
+
+```
+salt-key -A
+```
+
+Test connectivity to your minions by issuing some commands.
+
+```
+$ salt \* test.ping
+$ salt \* test.version
+```
+
+__Troubleshooting__
+
+If your minion or proxy minion fails to connect you can view the logs to diagnose the problem at `/var/log/salt/minion` and `/var/log/salt/proxy`, respectively. For more verbose output, you can set `log_level` in the minion/proxy-minion config file(s) or use the `--log-level` flag at the cli if running the process in the foreground. You can view the available log levels in salt in the [docs](https://docs.saltproject.io/en/latest/ref/configuration/logging/index.html#log-levels).
+
+
+__Built-in execution modules__
+
+Salt comes with hundreds of built-in modules for performing various jobs. Some are intended to be used with proxy minions, some with regular minions, while some support both. Let’s experiment with a few of them of interest to us.
+
+Target the arista netmiko proxy minion.
+
+```
+$ salt -I 'proxy:device_type:arista*' netmiko.send_config  config_commands='["aaa authorization console", "no aaa root"]' delay_factor=3 
+```
+
+Or we can target the all netmiko proxy minions.
+
+```
+$ salt -I 'proxy:proxytype:netmiko' netmiko.send_config  config_commands='["no ip access-list DENY-HOST", "ip access-list DENY-HOST", "deny ip host 10.0.0.1 any"]' delay_factor=4
+```
+
+With this function, like many others in salt, we can alternatively source the file from a template, which may include jinja. The default file_roots location, defined in the master configuration file, is /srv/salt; let’s create the /srv/salt directory. Inside here let’s create another directory “templates”, with the file basic.j2 inside.
+
+```
+{# /srv/salt/templates/basic.j2 #} 
+{%- set proxytype = pillar.get('proxy', {}).get('proxytype') %}
+{%- set device_type = pillar.get('proxy', {}).get('device_type') %}
+{%- if proxytype == 'junos' %}
+set system no-redirects
+set system no-redirects-ipv6
+{%- elif proxytype == 'netmiko' and device_type == 'arista_eos' %}
+aaa authorization console
+no aaa root
+{%- elif proxytype == 'netmiko' and device_type == 'cisco_nxos' %}
+no ip access-list DENY-HOST
+ip access-list DENY-HOST
+deny ip host 10.0.0.1 any
+{%- else %}
+  {{ raise("Unsupported proxytype and / or device_type") }}
+{%- endif %}
+```
+
+Now let’s apply this config, targeting all devices.
+
+```
+$ salt -I 'proxy:proxytype:netmiko' netmiko.send_config salt://templates/basic.j2
+```
+
+We’ve successfully sent a dynamic jinja template to multiple devices with salt! Notice that this command only works for netmiko proxy minions. For the juniper device, we have to use the built-in junos module, `junos.load`. We will create a custom module in Lab 2 to abstract this away so that we can target all proxy minions.
+
+Before we do that, there are a few more things to notice here. First of all, we moved the logic to determine which config to send, in the jinja itself. Also, salt provides a raise function within jinja that we used to halt further execution if we targeted an unsupported device. Secondly, we were able to do this because of the salt injected pillar variable which holds all of the pillar data for the minion targeted. Salt additionally injects the variables grains and salt, which hold the grains data and execution modules, respectively. Finally, notice the `salt://` filepath. This instructs salt to use the configured file server, which by default serves the files from the /srv/salt directory. It is the role of the execution module to handle this correctly, but this is a common convention supported across most salt built-ins.
+
+__Other built-in modules__
+
+It’s easy to look up which modules, functions and in-source documentation exist for any minion. Here are a few example commands to use.
+
+```
+$ salt <tgt> sys.list_modules 
+$ salt <tgt> sys.list_functions netmiko
+$ salt <tgt> sys.doc netmiko.send_config
+```
+
+The junos proxy also can make use of built in functions.
+
+```
+$ salt -I 'proxy:proxytype:junos' junos.facts
+```
+
+There are many built-in execution modules to explore but we are certainly not constrained by them. With salt’s plug-in architecture, we can easily add our own custom modules! As you will see in the following lab, these can be entirely unique and / or leverage existing modules.
+
 ## Lab 2: Writing Custom Execution Modules
 
 Let’s create a module which abstracts the exact method for communicating across proxy device types that we can commonly call upon when configuring devices. Create a file in the `_modules` directory in the `file_roots` named `common.py`
@@ -414,7 +624,7 @@ There are several operations that happen when “configuring” a device. The ta
 * Abort
 ** Discarding the candidate configuration
 
-Let’s create a custom _virtual_ execution module `net_config` to perform these tasks. Starting with arista, let’s create `net_config_arista.py` and include the appropriate virtual function.
+Let’s create a custom virtual _execution_ module `net_config` to perform these tasks. Starting with arista, let’s create `net_config_arista.py` and include the appropriate virtual function.
 
 ```
 # /srv/salt/_modules/net_config_arista.py
@@ -449,7 +659,6 @@ Let's start with the load function.
 ```
 ...
 import time
-from jinja2 import TemplateError
 ...
 
 def load(template, session_name=None):
@@ -467,21 +676,9 @@ def load(template, session_name=None):
         session_name = "config-session-" + str(int(time.time() * 1000))
     config_session_cmd = 'configure session ' + session_name
 
-    template_string = __salt__['slsutil.renderer'](
-        template, default_renderer='jinja'
-    ).strip()
-    list_of_commands = template_string.splitlines()
-    if not list_of_commands:
-        raise TemplateError(
-            "The rendered template contains 0 lines of configuration. "\
-            "Check the template or the template authorization."
-        )
-
-    __salt__['netmiko.enter_config_mode'](
-        config_command=config_session_cmd
-    )
     device_output = __salt__['netmiko.send_config'](
-        config_commands=list_of_commands,
+        config_file=template,
+        config_mode_command=config_session_cmd,
         delay_factor=2,
         exit_config_mode=True
     )
@@ -538,22 +735,16 @@ Now for the commit and abort functions.
 def commit(session):
     cfg_session_cmd = 'configure session ' + session
     ret = ""
-    ret += __salt__['netmiko.enter_config_mode'](
-        config_command=cfg_session_cmd
-    )
     ret += __salt__['netmiko.send_config'](
-        config_commands=['commit'], exit_config_mode=True
+        config_commands=['commit'], config_mode_command=cfg_session_cmd, exit_config_mode=True
     )
     return ret
 
 def abort(session):
     cfg_session_cmd = 'configure session ' + session
     ret = ""
-    ret += __salt__['netmiko.enter_config_mode'](
-        config_command=cfg_session_cmd
-    )
     ret += __salt__['netmiko.send_config'](
-        config_commands=['abort'], exit_config_mode=True
+        config_commands=['abort'], config_mode_command=cfg_session_cmd, exit_config_mode=True
     )
     return ret
 ```
@@ -673,21 +864,41 @@ __/srv/salt/templates/cisco/rm_test_access_list.j2__
 no ip access-list test-access-list
 ```
 
-__/srv/salt/templates/juniper/lldp.set__
+__/srv/salt/templates/juniper/igmp.set__
 ```
-set protocols lldp interface all
+set protocols igmp interface all
 ```
 
-__/srv/salt/templates/juniper/no_lldp.set__
+__/srv/salt/templates/juniper/no_igmp.set__
 ```
-delete protocols lldp interface all
+delete protocols igmp interface all
+```
+
+Juniper makes rendering the diff easy since it is a built-in capability of the hardware.
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.load salt://templates/juniper/igmp.set
+```
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.diff
+```
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.commit
+```
+
+or
+
+```
+$ salt -I 'proxy:proxytype:junos' net_config.abort
 ```
 
 We now have a very robust virtualized config module for our 3 device types!
 
-Now, if we want to use them in states we should create the corresponding custom state module. 
+Now, if we want to use them in states we should create the corresponding custom _state_ module. 
 
-### Writing the custom state module function `net_config.configured`
+__Writing the custom state module function `net_config.configured`__
 
 As mentioned earlier, it is of great benefit to include idempotent logic when writing state modules. We will be using the `net_config` execution module we just created to build our state module.
 
@@ -702,7 +913,7 @@ $ mkdir _states
 
 def configured(name):
     """
-    Ensure the device is configured. Uses config execution module
+    Ensure the device is configured. Uses net_config execution module
     """
     ret = {
         'name': name,
@@ -764,13 +975,13 @@ Now let’s sync our modules and states:
 $ salt \* saltutil.sync_all
 ```
 
-Almost ready to test! Let’s create an sls file which will be used for all of our devices configuration. Create the following in the “states” directory.
+Almost ready to test! Let’s create an sls file which will be used for all of our devices configuration. Create the following in the `states/` directory.
 
 ```
 # /srv/salt/states/configure_devices.sls
 
 {%- if pillar['proxy']['proxytype'] == 'junos' %}
-  {%- set template_path = "salt://templates/juniper/lldp.set" %}
+  {%- set template_path = "salt://templates/juniper/igmp.set" %}
 {%- elif 'arista' in pillar['proxy']['device_type'] %}
   {%- set template_path = "salt://templates/arista/add_vlan_10.j2" %}
 {%- elif 'cisco' in pillar['proxy']['device_type'] %}
@@ -782,7 +993,7 @@ configure_device:
     - name: {{ template_path }}
 ```
 
-Here we are using the state function we just made, and applying the appropriate template_path. Notice how we are using the power of jinja and salt’s inject global variables to dynamically determine the appropriate template path!
+Here we are using the state function we just made, and applying the appropriate template_path. Notice how we are using the power of jinja and salt’s injected global variables to dynamically determine the appropriate template path!
 
 Now let’s execute this state with the following command. Target all the proxy minions.
 
@@ -790,7 +1001,7 @@ Now let’s execute this state with the following command. Target all the proxy 
 $ salt -I 'proxy:*' state.sls states.configure_devices
 ```
 
-Notice the output coloration upon success, changes, etc. We now have a powerful salt configuration state!
+Notice the output coloration upon success, changes, etc. We now have a powerful and abstracted custom salt configuration state!
 
 Notice the state’s idempotency. We can apply the same state again and will expect no perturbation since we are already in our desired configuration.
 
@@ -806,7 +1017,7 @@ We can apply a “de-configuration” state to further test and demonstrate. Cre
 # /srv/salt/states/deconfigure_devices.sls
 
 {%- if pillar.proxy.proxytype == 'junos' %}
-  {%- set template_path = "salt://templates/juniper/no_lldp.set" %}
+  {%- set template_path = "salt://templates/juniper/no_igmp.set" %}
 {%- elif 'arista' in pillar.proxy.device_type %}
   {%- set template_path = "salt://templates/arista/rm_vlan_10.j2" %}
 {%- elif 'cisco' in pillar.proxy.device_type %}
@@ -838,7 +1049,7 @@ Success!
 
 __Background__
 
-Salt operates as a publish / subscribe model, i.e., the master publishes events to its event bus on port 4505, while the minions, listening to this port, determine if the job is for them and proceed to execute it. The minion will then return data on port 4506. Therefore, minus the publishing of events, the salt minion is largely responsible for the successful completion and return of the job. However, salt provides a mechanism for which to execute commands on the master, these are called runners.
+Salt operates as a publish / subscribe model, i.e., the master publishes events to its event bus on port 4505, while the minions, listening to this port, determine if the job is for them and proceed to execute it. The minion will then return data on port 4506. Therefore, minus the publishing of events, the salt minion is largely responsible for the successful completion and return of the job. However, salt provides a mechanism for which to execute commands on the master; these are called runners.
 
 There are many runners built into salt. For example, to view values from the master config:
 
@@ -869,20 +1080,19 @@ To do this we need to first declare where we are going to store the runner modul
 
 ```
 runner_dirs:
-  - /srv/runners
   - /srv/salt/runners
 ```
 
 Remember to restart the master process after modifying the config.
 
 ```
-$ supervisorctl restart salt-master
+$ systemctl restart salt-master
 ```
 
 Be sure to also create the corresponding directories.
 
 ```
-$ mkdir /srv/runners && mkdir /srv/salt/runners
+$ mkdir /srv/salt/runners
 ```
 
 Runner modules are always executed on the master, so they can be especially useful for “one-off” scripts. Adding a runner module instead of normal python utility scripts allows us to use typical salt paradigms _and_ freely use them within salt states and orchestration.
@@ -934,6 +1144,11 @@ def running_config_report(tgt='*', tgt_type='glob', save_as=''):
 
 Notice we are using the `get.running_config` function we created earlier through the use of the `salt.execute` built-in runner. Also, notice that we took advantage of `salt.execute` which publishes the job for the targeted minions to execute in parallel. Then, we simply iterate through the return to generate the report.
 
+We also need to sync the runners.
+```
+$ salt-run saltutil.sync_runners
+```
+
 Now we can execute this function on a list of minions with a command like the following:
 
 ```
@@ -942,6 +1157,8 @@ $ salt-run generate.running_config_report \
 ```
 
 And we get a report of the running configuration from our list of minions!
+
+Notice that the runner we wrote is able to accept any `tgt` and `tgt_type` since these are simply passed along to the `salt.execute` function.
 
 __Salt Orchestration__
 
@@ -1017,9 +1234,9 @@ Congratulations! We have successfully sequentially configured our devices with s
 
 ## Lab 5: Reactor and Beacons
 
-Salt has the ability to automate infrastructure operations with little to no human intervention. In this lab, we will become familiar with the salt reactor and beacons. Beacons are salt modules that are distributed and run on the minion, which can be configured to emit messages when certain conditions occur. Examples include file modification, memory usage exceeding a threshold, a package being out of date, etc. Salt has many built-in beacon modules which only require minimal configuration to set up. Additionally, we could write a custom beacon, or a stand-alone python script which emits salt events.
+Salt has the ability to automate infrastructure operations with little to no human intervention. In this lab, we will become familiar with the salt reactor and beacons. Beacons are salt modules that are distributed and run on the minion, which can be configured to emit messages when certain conditions occur. Examples include file modification, memory usage exceeding a threshold, a package being out of date, etc. Salt has many built-in beacon modules which only require minimal configuration to set up. For information on the available built-in beacons see the [docs](https://docs.saltproject.io/en/latest/py-modindex.html#cap-b). Additionally, we could write a custom beacon, or a stand-alone python script which emits salt events.
 
-The salt reactor is located on the master and _reacts_ to events. These reactions can respond to events emitted by beacons (or custom scripts). Once the event tag is matched, salt will execute a list of reactor sls files, typically to remediate or otherwise respond to the event in question. Events can pass data to be used by reactors. This can be very useful in certain scenarios.
+The salt __reactor__ is located on the master and _reacts_ to events. These reactions can respond to events emitted by beacons (or custom scripts). Once the event tag is matched, salt will execute a list of reactor sls files, typically to remediate or otherwise respond to the event in question. Events can pass data to be used by reactors. This can be very useful in certain scenarios.
 
 __Writing a custom beacon__
 
@@ -1047,7 +1264,7 @@ $ mkdir /srv/salt/_beacons
 
 def validate(config):
     _config = {}
-    map(_config.update, config)
+    list(map(_config.update, config))
     
     for fun in _config['salt_fun']:
         if fun not in __salt__:
@@ -1057,7 +1274,7 @@ def validate(config):
 def beacon(config):
     events = []
     _config = {}
-    map(_config.update, config)
+    list(map(_config.update, config))
 
     for fun in _config['salt_fun']:
         ret = __salt__[fun]()
@@ -1088,7 +1305,7 @@ Sync the beacons and restart the minion process.
 
 ```
 $ salt \* saltutil.sync_beacons
-$ supervisorctl restart salt-minion
+$ systemctl restart salt-minion
 ```
 
 Now let’s watch the master event bus for the beacon event and return data.
@@ -1269,7 +1486,7 @@ The default_config pillar file should be the following for juniper and cisco, re
 
 __/srv/pillar/juniper/default_config.sls__
 ```
-default_config: salt://templates/juniper/lldp.set
+default_config: salt://templates/juniper/igmp.set
 ```
 
 __/srv/pillar/cisco/default_config.sls__
@@ -1302,11 +1519,7 @@ beacons:
 
 The `disable_during_state_run` option is a built-in beacon feature which will, as its name implies, halt the beacon during state module execution. This is to help avoid potential interference with other operations.
 
-Be sure to restart the proxy minions and then view the salt event bus.
-
-```
-supervisorctl restart <minion1> <minion2> <minion3>
-```
+Be sure to __restart the proxy minions__ and then view the salt event bus. Unless you have configured the proxy minions with a process manager such as systemd or supervisord, you will need to stop the processes and start new ones manually.
 
 ```
 $ salt-run state.event pretty=True
@@ -1322,9 +1535,9 @@ $ salt -I 'proxy:*' state.sls states.configure_devices
 $ salt -I 'proxy:*' state.sls states.deconfigure_devices
 ```
 
-You should be seeing the beacon event after “de-configuring” the device.
+__Note__: The above beacon module is written to only return events _if_ the return (from each `salt_fun`, respectively) is "truthy". Therefore, since our `net_config.diff` returns `False` when there is no diff, you should only see the beacon event(s) after “de-configuring” the device.
 
-Now let’s add auto-remediation via salt reactor.
+Now, let’s add auto-remediation via the salt reactor.
 
 In the master config file we can set up our reactor to watch for event tags:
 
@@ -1337,7 +1550,7 @@ reactor:
     - /srv/salt/reactor/remediate_monitor.sls
 ```
 
-Notice that we can include the glob “*” in the event tag. For each event of this form the master sees, the list of reactor states will be executed. Here we have only listed a single reactor state that we have yet to write. Let’s write it.
+Notice that we can include the glob `*` in the event tag. For each event of this form the master sees, the list of reactor states will be executed. Here we have only listed a single reactor state that we have yet to write. Let’s write it.
 
 ```
 $ mkdir /srv/salt/reactor
@@ -1354,12 +1567,14 @@ configure_device_{{ data['_stamp'] }}:
         - states.configure_devices
 ```
 
+Notice that we can use the event's data by using the jinja injected `data` variable.
+
 The syntax for reactor states is different from other sls files you have seen before. The difference is that the namespace for the function in the id block (in this case `local.state.sls`) must designate which type of reactor is run. “Local” will run an execution module on the remote minions specified. “Runner” will allow us to use runner modules. Other types of reactors exist. For more information, please consult the [docs page on reactor states](https://docs.saltstack.com/en/latest/topics/reactor/).
 
 Restart the master and view the event. “Deconfigure” the minions, if necessary, to view the auto-remediation.
 
 ```
-$ supervisorctl restart salt-master
+$ systemctl restart salt-master
 ```
 
 ```
@@ -1373,7 +1588,7 @@ Note: If the monitor beacon we set up earlier for the normal salt minion is stil
 ```
 $ mv /etc/salt/minion.d/beacons.conf \
     /etc/salt/minion.d/beacons.conf.disabled
-$ supervisorctl restart salt-minion
+$ systemctl restart salt-minion
 ```
 
 Congratulations! We have learned a powerful way to auto-remediate configuration drift!
